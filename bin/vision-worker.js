@@ -20,6 +20,7 @@ const os = require('os');
 const http = require('http');
 
 const { execFile, execSync } = require('child_process');
+const _ocrTriage = require('../src/ocr-triage');   // OCR/Vision 분류기(기본 off)
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || (() => {
   try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.orbit-config.json'), 'utf8')).anthropicApiKey || ''; }
@@ -394,10 +395,53 @@ function _isValidResult(result) {
   return !!(result.app || result.activity || result.screen);
 }
 
+// OCR-only 판정건: 텍스트를 screen.ocr 이벤트로 보존(Claude 미호출). enforce(on) 모드에서만 호출.
+function _emitOcrEvent(ctx, ocrText) {
+  try {
+    ctx = ctx || {};
+    const payload = JSON.stringify({ events: [{
+      id: `ocr-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+      type: 'screen.ocr', source: 'vision-worker-ocr',
+      sessionId: ctx.sessionId || `daemon-${ctx.hostname || ''}`,
+      userId: ctx.userId || undefined,
+      timestamp: ctx.ts || new Date().toISOString(),
+      data: {
+        hostname: ctx.hostname || '', app: ctx.name || '', windowTitle: ctx.windowTitle || '',
+        originalCaptureId: ctx.captureId || undefined,
+        ocrText: (ocrText || '').slice(0, 8000), route: 'ocr',
+      },
+    }] });
+    const u = new URL('/api/hook', ORBIT_SERVER);
+    const mod = u.protocol === 'https:' ? https : http;
+    const h = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) };
+    if (ORBIT_TOKEN) h['Authorization'] = 'Bearer ' + ORBIT_TOKEN;
+    const r = mod.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname, method: 'POST', headers: h, timeout: 10000 }, res => res.resume());
+    r.on('error', () => {}); r.write(payload); r.end();
+  } catch {}
+}
+
 // ── 통합 분석 함수 (1회 재시도 포함) ─────────────────────────────────────────
 async function visionAnalyze(base64, ctx) {
   const analyze = USE_CLI ? visionCli : ANTHROPIC_KEY ? visionApi : null;
   if (!analyze) throw new Error('Claude CLI 또는 ANTHROPIC_API_KEY 필요');
+
+  // ── OCR 트리아지 (env VISION_OCR_TRIAGE=shadow|on, 기본 off) ─────────────────
+  // shadow: 분류·집계만(Claude는 그대로 호출 → 손실0 실측). on: OCR판정건은 Claude 스킵.
+  const _tmode = _ocrTriage.mode();
+  if (_tmode !== 'off') {
+    try {
+      const _ocr = _ocrTriage.ocrExtract(base64);
+      const _dec = _ocrTriage.classify(ctx, _ocr);
+      _ocrTriage.tally(_dec, ctx);
+      if (_dec.route === 'ocr') {
+        console.log(`  [ocr-triage:${_tmode}] OCR-only ← ${((ctx && ctx.name) || '').slice(0, 24)} (${_dec.reason}, ${_ocr.wordCount}단어)`);
+        if (_tmode === 'on') {
+          _emitOcrEvent(ctx, _ocr.text);   // 텍스트 보존(screen.ocr), Claude 미호출
+          return null;                     // 호출측은 null=스킵으로 처리
+        }
+      }
+    } catch (e) { console.warn(`  [ocr-triage] 실패(무시, Vision 진행): ${e.message}`); }
+  }
 
   const model = pickModel(ctx); // 화면 가치별 모델 (핵심=Sonnet, 나머지=Haiku)
   if (ROUTER_ON) console.log(`  [모델] ${model || '기본'} ← ${((ctx && ctx.name) || '').slice(0, 24)}`);
