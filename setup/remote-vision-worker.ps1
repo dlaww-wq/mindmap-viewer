@@ -20,11 +20,13 @@
 #
 # 옵션:
 #   -ReservePct 30   주간 사용량에서 사용자 몫으로 남길 %(기본 30). 별도계정이면 5로 낮춰 최대활용.
+#   -PollSec 300     서버큐 폴링 주기 초(기본 300=5분). 백로그 빨리 비우려면 120 등으로 낮춤.
 #   -Once            첫 배치만 처리하고 종료(테스트용).
 # =============================================================================
 param(
   [string]$Token = '',
   [int]$ReservePct = 30,
+  [int]$PollSec = 300,          # 서버큐 폴링 주기(초). 기본 5분. 백로그 빨리 비우려면 낮춤.
   [switch]$Once,
   [string]$RepoDir = "$env:USERPROFILE\mindmap-viewer",
   [string]$RepoUrl = 'https://github.com/Jayinsightfactory/mindmap-viewer.git'
@@ -73,6 +75,7 @@ Write-Host "[OK] Orbit 토큰 확인 (orbit_...$($Token.Substring([Math]::Max(0,
 $env:ANTHROPIC_API_KEY   = ''                 # 반드시 공백 → CLI 구독으로만 분석($0)
 $env:ORBIT_TOKEN         = $Token
 $env:ORBIT_CLI_RESERVE_PCT = "$ReservePct"    # 주간 사용자 몫 보전 %
+$env:VISION_POLL_MS      = "$($PollSec * 1000)"  # 서버큐 폴링 주기(재시작 후에도 유지)
 $env:VISION_MODEL_ROUTER = 'on'               # 핵심화면=Sonnet, 나머지=Haiku
 # $env:ORBIT_SERVER_URL  = 'https://mindmap-viewer-production-adb2.up.railway.app'  # 기본값이라 생략 가능
 
