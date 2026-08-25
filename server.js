@@ -234,6 +234,7 @@ const createLearningRouter            = require('./routes/learning');
 const eventBus                        = require('./src/event-bus');
 const createEventBusRouter            = require('./routes/event-bus');
 const createOpsOntologyRouter         = require('./routes/ops-ontology');
+const createVerificationRouter        = require('./routes/verification');   // 섀도우 예측 검증율 게이트
 
 // ─── 상수 (config/environment.js 에서 중앙 관리) ─────────────────────────────
 const PORT          = env.PORT;
@@ -8375,6 +8376,7 @@ app.use('/api', createLearningRouter({ verifyToken, getEventsForUser, resolveUse
 // ─── 통합 이벤트 버스 (ERP + Orbit + AI Trainer + nenova_agent) ──────────────
 app.use('/api', createEventBusRouter({ eventBus, verifyToken, broadcastAll }));
 app.use('/api/ops-ontology', createOpsOntologyRouter({ getPool: dbModule.getDb, resolveAdmin, isAdminReq: isAdminReqAsync }));
+app.use('/api/verification', createVerificationRouter({ getDb: dbModule.getDb, isAdminReq: isAdminReqAsync }));
 app.use('/api/flow', require('./routes/flow-map')({ getPool: dbModule.getDb, isAdminToken: env.isAdminToken })); // 업무 흐름 청사진 API
 app.use('/api/timetable', require('./routes/work-timetable')({ getPool: dbModule.getDb, isAdminReq: isAdminReqAsync })); // 직원 업무시간 타임테이블 (시간/일/주/월)
 
@@ -8859,6 +8861,7 @@ app.use('/api', createSyncRouter({ getDb: dbModule.getDb, getAllEvents }));
 // ─── 회사 컨설팅 플랫폼 (Company Ontology + Diagnosis + Learning) ───────────
 try { companyOntology.ensureCompanyTables(dbModule.getDb()); } catch (e) { console.warn('[DB Init] company-ontology 초기화 스킵:', e.message); }
 try { createOpsOntologyRouter.ensureOpsTables(dbModule.getDb()); } catch (e) { console.warn('[DB Init] ops-ontology 초기화 스킵:', e.message); }
+try { createVerificationRouter.ensureTable(dbModule.getDb()); } catch (e) { console.warn('[DB Init] verification 초기화 스킵:', e.message); }
 try { createOpsOntologyRouter.startPromoteCron(dbModule.getDb, 30, 2); } catch (e) { console.warn('[DB Init] ops-ontology cron 스킵:', e.message); }
 
 // ─── LLM 비용 계측 (호출자별 토큰/비용 — "API 비용 어디서 나가나") ──────────
