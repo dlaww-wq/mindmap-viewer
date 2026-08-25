@@ -77,14 +77,21 @@ async function runBatch() {
   // 최신 우선 + 배치 상한
   const batch = points.slice(0, MAX);
   console.log(`[shadow] 예측점 ${points.length} 중 ${batch.length} 처리 (모델 ${MODEL})`);
-  const scores = [];
+  // 점마다 즉시 적재(중단돼도 부분진행 보존)
+  let posted = 0;
   for (const p of batch) {
     const r = await predictAndScore(p.who, p.sessionKey, p.cutIdx, p.prefix, p.actual);
-    if (r) { scores.push(r); console.log(`  ${p.who} ${p.sessionKey}#${p.cutIdx} [${r.category}] overall ${Number(r.overall).toFixed(2)}`); }
+    if (r) {
+      const res = await apiPost('/api/verification/scores', { scores: [r] });
+      const ok = (res && res.inserted) || 0; posted += ok;
+      console.log(`  ${p.who} ${p.sessionKey}#${p.cutIdx} [${r.category}] overall ${Number(r.overall).toFixed(2)} → 적재 ${ok}`);
+    } else {
+      console.log(`  ${p.who} ${p.sessionKey}#${p.cutIdx} — 예측/채점 실패(스킵)`);
+    }
     await new Promise(r2 => setTimeout(r2, 1500));
   }
-  if (scores.length) { const res = await apiPost('/api/verification/scores', { scores }); console.log(`[shadow] 적재 ${res && res.inserted || 0}건`); }
-  return scores.length;
+  console.log(`[shadow] 배치 완료 · 적재 ${posted}건`);
+  return posted;
 }
 
 (async () => {
