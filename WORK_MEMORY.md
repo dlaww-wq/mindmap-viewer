@@ -1546,3 +1546,22 @@ rg -n --ignore-case "검색어" WORK_MEMORY.md WORKSPACE.md PROGRESS.md CLAUDE.m
 - 검색어: 가끔끊김, daemon-self.log, memory_graceful_restart, spool
 - 다시 보면: src/screen-capture.js `_shouldRunSelfTest`, src/clipboard-watcher.js DEDUPE_MS, src/daemon-updater.js `_isRealVersion`, ~/.orbit/vision-worker-start.ps1
 
+## 2026-08-25 (opus4.8) 데몬 최신화·데이터검증·마우스렉 + 세션 이어받기 규약
+
+### ★오르빗 데몬 작업 이어받기 규약 (트리거 명칭)
+- 사용자가 **"오르빗 데몬 작업 / orbit 데몬 / 데몬 최신화 / 데이터확인"** 이라고 하면:
+  1) **DAEMON_STRUCTURE.md → DATA_CHECK.md 먼저 읽는다**(CLAUDE.md 00/§13 규칙. 추측·재부팅 금지).
+  2) 이 WORK_MEMORY 최신 날짜 엔트리부터 상태를 이어받는다.
+  3) 인증: 조회·admin·명령 전부 `~/.orbit-config.json`의 `token`(orbit_ 프리픽스, admin 발급분) **하나로 됨** — capture-funnel·daemon/command·ops-ontology/promote 다 통과(실측). "마스터 orbit_ vs config 토큰" 구분은 실질적으론 같은 토큰.
+- **다른 클로드(다른 PC/계정)**: 개인 memory는 공유 안 됨 → **mindmap-viewer 레포에서 작업해야** CLAUDE.md·이 파일로 이어받는다. 지시는 "mindmap-viewer 오르빗 데몬 작업 이어서".
+
+### 이 세션 처리 (증거)
+- **데몬 코드최신화**: per-host `POST /api/daemon/command {hostname, action:"update"|"restart"}`(config토큰). 살아있는 8대 중 6대 최신 `87de2518`. 스트래글러 NENOVA2025(e9645851)·강현우(92358675)는 레버 안 닿음 → 전원주기 수렴(§13). owner 좀비(§13-Z)는 로컬 kill 실패(LocalSystem 추정)했으나 밤 전원주기로 회생.
+- **집계 promote**: `POST /api/ops-ontology/promote?hours=N`. 168h는 API 타임아웃, **96h가 완주 한계**(actions 14420·rel 32147·ev 74642·kakao 4978). 완전 7일은 env `PROMOTE_BOOT_HOURS=168`+재배포.
+- **★데이터확인 함정(중요·내가 한 번 오판)**: `screen.analyzed`의 `timestamp`는 **분석시각이 아니라 캡처시각**. `/api/admin/raw-events`는 timestamp DESC라 옛 백로그 캡처가 위로 떠 "분석 정지"로 **오판하기 쉬움**. **실제 분석시각 = event `id`의 13자리 Date.now()**(`vision-cli-{epoch}-N` 원격 / `vision-{epoch}-` owner스풀). 또는 **`/api/vision/spool/stat` total 델타**(줄면 소비 중)로 판정. 실측: 분석 19분전 정상·스풀 40초당 -2.
+- **원격 vision 워커**: 다른 PC에서 `setup/remote-vision-worker.ps1 -Token orbit_ -PollSec 300`. 같은 Max계정=부하만 이전(quota 공유). server-queue와 spool은 별개 백로그.
+- **OCR/Vision 분류기**: `VISION_OCR_TRIAGE` off(기본)/shadow(측정)/on. `src/ocr-triage.js`+`setup/ocr-extract.ps1`(WinRT는 powershell.exe 5.1에서만, UTF-8 출력 고정). 커밋 83b43d2.
+- **마우스렉=오르빗 아님**: 프로세스별 **live CPU%부터** 봐야. 8/24=좀비 railway ssh(10일 100% 코어)+Codex cua_node(117%) 정리로 해결. 8/25 재발=Cursor 방금 열림(2.8GB)+RAM 96%(순수 메모리초과, 앱 닫아야). 회생한 데몬은 1%·96MB 깨끗.
+- **상태 주의**: `~/.orbit/quota-hold` ON이면 owner 워커 대기. owner 학습워커 전부 정지 = 학습을 다른 PC로 이전한 방침(정상, 고장 아님).
+- 검색어: 오르빗 데몬 작업, 데이터확인, screen.analyzed timestamp 캡처시각, id Date.now, 스풀 델타, promote 96h, remote-vision-worker, 마우스렉 CPU
+
