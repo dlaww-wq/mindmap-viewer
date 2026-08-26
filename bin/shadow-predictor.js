@@ -19,6 +19,9 @@ const ORBIT_SERVER = process.env.ORBIT_SERVER_URL || 'https://mindmap-viewer-pro
 const ORBIT_TOKEN = process.env.ORBIT_TOKEN || (() => { try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.orbit-config.json'), 'utf8')).token || ''; } catch { return ''; } })();
 const CLAUDE_CLI = (() => { try { return execSync(process.platform === 'win32' ? 'where claude' : 'which claude', { timeout: 3000 }).toString().trim().split(/\r?\n/)[0]; } catch { return 'claude'; } })();
 const MODEL = process.env.SHADOW_CLI_MODEL || 'sonnet';
+// 예측 모델 분리: 평소 sonnet(저비용 상시), 초정밀 필요시(승격 임계 근접·고위험 스텝) opus로.
+//   확인 실행:  SHADOW_MODEL_PRED=opus node bin/shadow-predictor.js --once
+const MODEL_PRED = process.env.SHADOW_MODEL_PRED || MODEL;
 const MAX = parseInt(process.env.SHADOW_MAX) || 16;         // 배치당 예측점 상한
 const HOURS = parseInt(process.env.SHADOW_HOURS) || 96;
 const POLL_MS = parseInt(process.env.SHADOW_POLL_MS) || 6 * 60 * 60 * 1000; // 6h
@@ -37,17 +40,17 @@ const TMP = path.join(os.tmpdir(), 'orbit-shadow'); try { fs.mkdirSync(TMP, { re
 function apiGet(p) { return new Promise(r => { const u = new URL(p, ORBIT_SERVER); const mod = u.protocol === 'https:' ? https : http; const q = mod.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', headers: { Authorization: 'Bearer ' + ORBIT_TOKEN }, timeout: 40000 }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { r(JSON.parse(d)); } catch { r(null); } }); }); q.on('error', () => r(null)); q.on('timeout', () => { q.destroy(); r(null); }); q.end(); }); }
 function apiPost(p, body) { return new Promise(r => { const u = new URL(p, ORBIT_SERVER); const mod = u.protocol === 'https:' ? https : http; const data = JSON.stringify(body); const q = mod.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname, method: 'POST', headers: { Authorization: 'Bearer ' + ORBIT_TOKEN, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }, timeout: 40000 }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { r(JSON.parse(d)); } catch { r(null); } }); }); q.on('error', () => r(null)); q.on('timeout', () => { q.destroy(); r(null); }); q.write(data); q.end(); }); }
 
-function cliOnce(prompt) {
+function cliOnce(prompt, model) {
   return new Promise(resolve => {
-    execFile(CLAUDE_CLI, ['-p', prompt, '--model', MODEL], { timeout: 150000, maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
+    execFile(CLAUDE_CLI, ['-p', prompt, '--model', model || MODEL], { timeout: 150000, maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve(null);
       const m = String(stdout).match(/```(?:json)?\s*([\s\S]*?)```/) || [null, String(stdout)];
       try { resolve(JSON.parse((m[1] || '').trim())); } catch { try { resolve(JSON.parse(String(stdout).slice(String(stdout).indexOf('{'), String(stdout).lastIndexOf('}') + 1))); } catch { resolve(null); } }
     });
   });
 }
-// 재시도 래퍼(CLI 단발 null 손실 방지)
-async function cli(prompt) { for (let i = 0; i < 2; i++) { const r = await cliOnce(prompt); if (r) return r; await new Promise(s => setTimeout(s, 800)); } return null; }
+// 재시도 래퍼(CLI 단발 null 손실 방지). model 미지정 시 MODEL.
+async function cli(prompt, model) { for (let i = 0; i < 2; i++) { const r = await cliOnce(prompt, model); if (r) return r; await new Promise(s => setTimeout(s, 800)); } return null; }
 const minStep = s => ({ screen: s.screen, activity: (s.activity || '').slice(0, 160), app: s.app, nenovaAction: s.nenovaAction || null, gapSec: s.gapSec, clickFields: (s.clickFields || []).map(f => ({ name: f.name, clickXY: f.clickXY || null, value: f.value != null ? String(f.value).slice(0, 80) : null, source: f.source || null })) });
 function localCategory(actual) {
   const hay = `${actual.activity || ''} ${actual.screen || ''} ${actual.nenovaAction || ''}`.toLowerCase();
@@ -83,7 +86,7 @@ ${JSON.stringify(prefix)}
 - confidence: 0~1 (앞 흐름 근거가 강할수록 높게)
 
 순수 JSON 객체 하나로만 출력(마크다운/설명/코드펜스 금지):
-{"predScreen":"","predAction":"","predTarget":"","predClickRegion":"","predValue":"","predSource":"","confidence":0}`);
+{"predScreen":"","predAction":"","predTarget":"","predClickRegion":"","predValue":"","predSource":"","confidence":0}`, MODEL_PRED);
   if (!pred) return null;
   const sc = await cli(`너는 예측 유사도 채점기다. 아래 "예측"과 "실제 다음 스텝"을 5차원으로 채점한다.
 
@@ -112,7 +115,7 @@ note에 "예측 X / 실제 Y" 형식 한 줄 비교.
 순수 JSON 객체 하나로만 출력(마크다운/설명/코드펜스 금지):
 {"screenMatch":0,"actionMatch":0,"targetMatch":0,"coordMatch":0,"valueMatch":0,"overall":0,"note":""}`);
   if (!sc) return null;
-  return { sessionKey, cutIdx, who, category: localCategory(actual), screenMatch: sc.screenMatch, actionMatch: sc.actionMatch, targetMatch: sc.targetMatch, coordMatch: sc.coordMatch, valueMatch: sc.valueMatch, overall: sc.overall, note: (sc.note || '').slice(0, 300), source: 'shadow-predictor-v2' };
+  return { sessionKey, cutIdx, who, category: localCategory(actual), screenMatch: sc.screenMatch, actionMatch: sc.actionMatch, targetMatch: sc.targetMatch, coordMatch: sc.coordMatch, valueMatch: sc.valueMatch, overall: sc.overall, note: (sc.note || '').slice(0, 300), source: 'shadow-predictor-v2' + (MODEL_PRED !== MODEL ? '-' + MODEL_PRED : '') };
 }
 
 async function runBatch() {
@@ -152,7 +155,7 @@ async function runBatch() {
 
 (async () => {
   if (!ORBIT_TOKEN) { console.error('ORBIT_TOKEN 필요(admin)'); process.exit(1); }
-  console.log(`[shadow-predictor] 서버 ${ORBIT_SERVER} · 대상 ${USERIDS.length}인 · 배치상한 ${MAX}`);
+  console.log(`[shadow-predictor] 서버 ${ORBIT_SERVER} · 대상 ${USERIDS.length}인 · 배치상한 ${MAX} · 예측모델 ${MODEL_PRED}/채점 ${MODEL}`);
   const once = process.argv.includes('--once');
   await runBatch();
   if (once) { process.exit(0); }
