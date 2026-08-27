@@ -656,7 +656,9 @@ module.exports = function createNenovaDbRouter({ getDb }) {
           pool.request()
             .input('prodKey', sql.Int, prodKey)
             .query(`
-              SELECT * FROM ProductSort WHERE ProdKey = @prodKey
+              SELECT ps.* FROM ProductSort ps
+              JOIN Product p ON p.CounName = ps.CounName AND p.FlowerName = ps.FlowerName
+              WHERE p.ProdKey = @prodKey
             `),
         ]);
 
@@ -1038,9 +1040,10 @@ module.exports = function createNenovaDbRouter({ getDb }) {
           pool.request()
             .input('key', sql.Int, orderKey)
             .query(`
-              SELECT * FROM OrderHistory
-              WHERE OrderMasterKey = @key
-              ORDER BY CreateDtm DESC
+              SELECT oh.* FROM OrderHistory oh
+              JOIN OrderDetail od ON od.OrderDetailKey = oh.OrderDetailKey
+              WHERE od.OrderMasterKey = @key
+              ORDER BY oh.ChangeDtm DESC, oh.OrderHistoryKey DESC
             `),
         ]);
 
