@@ -39,6 +39,26 @@ const USE_CLI = !ANTHROPIC_KEY && !!CLAUDE_CLI;
 const TEMP_DIR = path.join(os.tmpdir(), 'orbit-vision');
 try { fs.mkdirSync(TEMP_DIR, { recursive: true }); } catch {}
 
+// ── Claude CLI 전역 직렬화 락 ────────────────────────────────────────────────
+// 여러 워커(--local/--spool 등)가 동시에 claude -p 를 호출하면 회전(rotating)
+// OAuth refreshToken 을 경쟁 갱신하다 소실 → 자격증명 죽음(재로그인 후 하루 만에 반복 만료).
+// 크로스프로세스 파일락으로 claude 호출을 한 번에 하나만 실행해 토큰을 보존한다.
+const CLI_LOCK = path.join(os.homedir(), '.orbit', 'claude-cli.lock');
+const CLI_LOCK_STALE_MS = 180000; // 3분(claude timeout 120s) 초과 점유 = 죽은 프로세스로 보고 회수
+function _cliSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+async function _acquireCliLock(waitMs = 300000) {
+  const start = Date.now();
+  for (;;) {
+    try { const fd = fs.openSync(CLI_LOCK, 'wx'); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); return true; }
+    catch {
+      try { const st = fs.statSync(CLI_LOCK); if (Date.now() - st.mtimeMs > CLI_LOCK_STALE_MS) { fs.unlinkSync(CLI_LOCK); continue; } } catch {}
+      if (Date.now() - start > waitMs) return false; // 과도한 대기 방지: 못 얻어도 진행
+      await _cliSleep(400 + Math.floor(Math.random() * 400));
+    }
+  }
+}
+function _releaseCliLock() { try { fs.unlinkSync(CLI_LOCK); } catch {} }
+
 // [화면 타임라인] 썸네일을 base64 자르기(→화면 상단만 보임) 대신 전체 화면을 축소해 저장.
 // owner PC(Windows)의 System.Drawing으로 폭 900px JPEG로 리사이즈 → 전체 화면이 다 보이면서 작음.
 // 실패 시 기존 방식(substring) 폴백. execSync는 무겁지만 캡처당 1회라 감당 가능.
@@ -351,6 +371,7 @@ async function visionCli(base64, ctx, model) {
   // CLI는 프롬프트에 파일 경로를 포함하면 Read 도구로 이미지 인식
   const prompt = `${tmpFile} ${_buildPrompt(ctx)}`;
 
+  const _locked = await _acquireCliLock(); // 여러 워커 동시 claude 호출 직렬화(회전 토큰 보존)
   return new Promise((resolve) => {
     // VISION_CLI_MODEL로 모델 지정(예: sonnet / haiku). 미설정 시 CLI 계정 기본모델.
     const _args = ['-p', prompt, '--allowedTools', 'Read', '--add-dir', TEMP_DIR];
@@ -359,6 +380,7 @@ async function visionCli(base64, ctx, model) {
     execFile(CLAUDE_CLI, _args,
       { timeout: 120000, maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
       try { fs.unlinkSync(tmpFile); } catch {}
+      if (_locked) _releaseCliLock();
       if (err) { console.warn(`  CLI 분석 실패: ${err.message}`); resolve(null); return; }
       resolve(_parseResult(String(stdout)));
     });
