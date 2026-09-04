@@ -816,11 +816,27 @@ function _matchProduct(name, products) {
     if (p.name?.toLowerCase() === n) return p;
     if (p.name_en?.toLowerCase() === n) return p;
   }
-  // 부분 매칭 (포함)
-  for (const p of products) {
-    if (p.name && n.includes(p.name.toLowerCase())) return p;
-    if (p.name_en && n.includes(p.name_en.toLowerCase())) return p;
-    if (p.name_en && p.name_en.toLowerCase().includes(n)) return p;
+  // 부분 매칭 (포함) — 입력과 길이 차이가 가장 작은 후보 선택
+  // (예: "캐롤라인골드" 입력 시 "캐롤라인"보다 "캐롤라인골드"를 우선 매칭)
+  {
+    let best = null, bestDiff = Infinity;
+    for (const p of products) {
+      const pname = (p.name || '').toLowerCase();
+      const pen = (p.name_en || '').toLowerCase();
+      if (pname && n.includes(pname)) {
+        const diff = n.length - pname.length;
+        if (diff < bestDiff) { best = p; bestDiff = diff; }
+      }
+      if (pen && n.includes(pen)) {
+        const diff = n.length - pen.length;
+        if (diff < bestDiff) { best = p; bestDiff = diff; }
+      }
+      if (pen && pen.includes(n)) {
+        const diff = pen.length - n.length;
+        if (diff < bestDiff) { best = p; bestDiff = diff; }
+      }
+    }
+    if (best) return best;
   }
   // alias 매칭
   for (const p of products) {
@@ -841,23 +857,48 @@ function _matchCustomer(name, customers) {
     const cn = (c.name || '').toLowerCase().replace(/[☆※★\s]/g, '');
     if (cn === n) return c;
   }
-  // 2순위: 부분 포함 (통용명이 카톡 호칭을 포함하거나 그 반대)
-  for (const c of customers) {
-    const cn = (c.name || '').toLowerCase().replace(/[☆※★\s]/g, '');
-    if (cn.includes(n) || n.includes(cn)) return c;
-  }
-  // 3순위: alias(CustName 사업자명) 매칭
-  for (const c of customers) {
-    const aliases = Array.isArray(c.name_alias) ? c.name_alias
-      : (typeof c.name_alias === 'string' ? (() => { try { return JSON.parse(c.name_alias); } catch { return []; } })() : []);
-    for (const alias of aliases) {
-      const an = (alias || '').toLowerCase().replace(/[(주)\s]/g, '');
-      if (an.includes(n) || n.includes(an)) return c;
+  // 2순위: 부분 포함 — 입력과 길이 차이가 가장 작은 후보 선택
+  // (예: "꽃가람농원" 입력 시 "꽃가람"보다 "꽃가람농원"을 우선 매칭)
+  {
+    let best = null, bestDiff = Infinity;
+    for (const c of customers) {
+      const cn = (c.name || '').toLowerCase().replace(/[☆※★\s]/g, '');
+      if (!cn) continue;
+      if (cn.includes(n) || n.includes(cn)) {
+        const diff = Math.abs(cn.length - n.length);
+        if (diff < bestDiff) { best = c; bestDiff = diff; }
+      }
     }
+    if (best) return best;
   }
-  // 4순위: kakao_room 필드
-  for (const c of customers) {
-    if (c.kakao_room?.toLowerCase().includes(n)) return c;
+  // 3순위: alias(CustName 사업자명) 매칭 — 길이 차이 최소 후보 선택
+  {
+    let best = null, bestDiff = Infinity;
+    for (const c of customers) {
+      const aliases = Array.isArray(c.name_alias) ? c.name_alias
+        : (typeof c.name_alias === 'string' ? (() => { try { return JSON.parse(c.name_alias); } catch { return []; } })() : []);
+      for (const alias of aliases) {
+        const an = (alias || '').toLowerCase().replace(/[(주)\s]/g, '');
+        if (!an) continue;
+        if (an.includes(n) || n.includes(an)) {
+          const diff = Math.abs(an.length - n.length);
+          if (diff < bestDiff) { best = c; bestDiff = diff; }
+        }
+      }
+    }
+    if (best) return best;
+  }
+  // 4순위: kakao_room 필드 — 길이 차이 최소 후보 선택
+  {
+    let best = null, bestDiff = Infinity;
+    for (const c of customers) {
+      const room = (c.kakao_room || '').toLowerCase();
+      if (room && room.includes(n)) {
+        const diff = room.length - n.length;
+        if (diff < bestDiff) { best = c; bestDiff = diff; }
+      }
+    }
+    if (best) return best;
   }
   return null;
 }

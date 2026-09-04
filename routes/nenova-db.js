@@ -1350,6 +1350,101 @@ module.exports = function createNenovaDbRouter({ getDb }) {
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  //                           차수 확정 상태 (Round Confirmation)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * GET /api/nenova/rounds/confirmation-status
+   * 차수 × 카테고리(CounName) 단위로 출하 확정 상태 집계
+   * ?year=2026  (필수: 연도, 기본값=올해)
+   * 응답:
+   *   {
+   *     year: 2026,
+   *     rounds: [
+   *       {
+   *         orderWeek: "20-01",
+   *         orderYearWeek: "2026-20-01",
+   *         totalShipments, confirmedShipments, totalBox, confirmedBox,
+   *         categories: [
+   *           { counName, totalShipments, confirmedShipments, totalBox, confirmedBox, status: 'confirmed'|'partial'|'pending' }
+   *         ]
+   *       }
+   *     ]
+   *   }
+   */
+  router.get('/rounds/confirmation-status', async (req, res) => {
+    try {
+      const year = parseInt(req.query.year) || new Date().getFullYear();
+
+      const result = await safeQuery(async (pool) => {
+        const r = pool.request();
+        r.input('year', sql.Int, year);
+
+        // 차수 × 카테고리(CounName) 그룹 집계
+        const data = await r.query(`
+          SELECT
+            sm.OrderYear,
+            sm.OrderWeek,
+            sm.OrderYearWeek,
+            p.CounName,
+            COUNT(DISTINCT sm.ShipmentKey) AS totalShipments,
+            COUNT(DISTINCT CASE WHEN sm.isFix = 1 THEN sm.ShipmentKey END) AS confirmedShipments,
+            SUM(ISNULL(sd.BoxQuantity, 0)) AS totalBox,
+            SUM(CASE WHEN sm.isFix = 1 THEN ISNULL(sd.BoxQuantity, 0) ELSE 0 END) AS confirmedBox
+          FROM ShipmentMaster sm
+          JOIN ShipmentDetail sd ON sm.ShipmentKey = sd.ShipmentKey
+          JOIN Product p          ON sd.ProdKey   = p.ProdKey
+          WHERE sm.OrderYear = @year
+            AND ISNULL(sm.isDeleted, 0) = 0
+          GROUP BY sm.OrderYear, sm.OrderWeek, sm.OrderYearWeek, p.CounName
+          ORDER BY sm.OrderWeek, p.CounName
+        `);
+
+        // 차수별로 그룹화
+        const roundMap = new Map();
+        for (const row of data.recordset) {
+          const key = row.OrderWeek;
+          if (!roundMap.has(key)) {
+            roundMap.set(key, {
+              orderWeek: row.OrderWeek,
+              orderYearWeek: row.OrderYearWeek,
+              totalShipments: 0,
+              confirmedShipments: 0,
+              totalBox: 0,
+              confirmedBox: 0,
+              categories: [],
+            });
+          }
+          const round = roundMap.get(key);
+          const cat = {
+            counName: row.CounName || '(미지정)',
+            totalShipments: Number(row.totalShipments || 0),
+            confirmedShipments: Number(row.confirmedShipments || 0),
+            totalBox: Number(row.totalBox || 0),
+            confirmedBox: Number(row.confirmedBox || 0),
+          };
+          // 상태 판정: confirmed / partial / pending
+          if (cat.totalShipments === 0) cat.status = 'pending';
+          else if (cat.confirmedShipments === cat.totalShipments) cat.status = 'confirmed';
+          else if (cat.confirmedShipments === 0) cat.status = 'pending';
+          else cat.status = 'partial';
+          round.categories.push(cat);
+          // 차수 합계 누적 (ShipmentKey 단위 중복 카운트 주의 — 한 ShipmentMaster가 여러 카테고리에 걸칠 수 있음)
+          round.totalShipments += cat.totalShipments;
+          round.confirmedShipments += cat.confirmedShipments;
+          round.totalBox += cat.totalBox;
+          round.confirmedBox += cat.confirmedBox;
+        }
+        return Array.from(roundMap.values()).sort((a, b) => a.orderWeek.localeCompare(b.orderWeek));
+      });
+
+      res.json({ ok: true, year, rounds: result });
+    } catch (err) {
+      handleError(res, err, 'rounds/confirmation-status');
+    }
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   //                           거래처 (Customers)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

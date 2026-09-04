@@ -8,7 +8,8 @@
       "Bash(npm install:*)",
       "Bash(ls:*)",
       "WebFetch(domain:drive.google.com)",
-      "Bash(mkdir -p .claude/hooks && ls .claude/hooks)"
+      "Bash(mkdir -p .claude/hooks && ls .claude/hooks)",
+      "mcp__7385d0f5-be7e-484c-81a2-31091d12ab44__search_files"
     ]
   }
 }
